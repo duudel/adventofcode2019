@@ -94,8 +94,14 @@ int actual_code[] = {
 
 int main(int argc, const char **argv)
 {
-    actual_code[1] = 12;
-    actual_code[2] = 2;
+    // Part one
+    //actual_code[1] = 12;
+    //actual_code[2] = 2;
+
+    // Part two, manually testing values
+    actual_code[1] = 39;
+    actual_code[2] = 51;
+
     Code code = to_code(actual_code);
 
     State state = {};
