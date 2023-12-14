@@ -118,6 +118,7 @@ How many steps is the shortest path that collects all of the keys?
 
 #include <cstdint>
 #include <ctime>
+//#include <unordered_map>
 
 uint64_t perf_time_nanos() {
     timespec ts;
@@ -186,6 +187,7 @@ namespace sample4
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <cassert>
 
 struct Pos
 {
@@ -205,12 +207,31 @@ struct Map
     int width, height;
 
     char operator()(int x, int y) {
+        //assert(0 <= x && x < width);
+        //assert(0 <= y && y < height);
         return data[y * width + x];
     }
     char& operator[](Pos pos) {
+        //assert(0 <= pos.x && pos.x < width);
+        //assert(0 <= pos.y && pos.y < height);
         return data[pos.y * width + pos.x];
     }
 };
+
+void map_free(Map map) {
+    free(map.data);
+}
+
+Map map_copy(Map map)
+{
+    char *data = (char*)malloc(map.width * map.height * sizeof(char));
+    memcpy(data, map.data, map.width * map.height * sizeof(char));
+    return {
+        .data = data,
+        .width = map.width,
+        .height = map.height,
+    };
+}
 
 void get_map_dims(const char *map, int *width, int *height)
 {
@@ -251,10 +272,7 @@ constexpr int calc_map_width(const char *map)
     int w = 0;
     while (map[0])
     {
-        if (map[0] == '\n')
-        {
-            break;
-        }
+        if (map[0] == '\n') break;
         w++;
         map++;
     }
@@ -300,6 +318,13 @@ Map map_from_file(const char *filename) {
     return map;
 }
 
+unsigned int hash(unsigned int x) {
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = (x >> 16) ^ x;
+    return x;
+}
+
 struct Memo
 {
     struct Key {
@@ -318,6 +343,20 @@ struct Memo
         int64_t hit;
         int64_t miss;
     } stats;
+
+    //struct KeyHash {
+    //    std::size_t operator()(const Key &key) const {
+    //        return hash(key.key_bits) ^ hash(key.pos.x) ^ hash(key.pos.y);
+    //    }
+    //};
+
+    //struct KeyEq {
+    //    bool operator()(Key a, Key b) const {
+    //        return a.key_bits == b.key_bits && a.pos == b.pos;
+    //    }
+    //};
+
+    //std::unordered_map<Key, int, KeyHash, KeyEq> map;
 };
 
 void memo_free(Memo *memo) {
@@ -355,36 +394,56 @@ Memo::Key memo_key(Pos pos, Key *keys, int keys_n) {
     };
 }
 
-int memo_hash(Memo::Key key) {
-    int lo = key.key_bits & 0xffff;
-    int hi = key.key_bits >> 16;
+unsigned int memo_hash(Memo::Key key) {
+    //return hash(key.key_bits) + hash(key.pos.x) + hash(key.pos.y);
+
+    //int lo = key.key_bits & 0xffff;
+    //int hi = key.key_bits >> 16;
     //return key.key_bits + lo * key.pos.x + key.pos.y * (hi + (1 << 14));
     //return lo ^ hi + key.pos.x + key.pos.y * 111;
-    return hi ^ (key.pos.y * 517741 + key.pos.x * 109 + lo);
+    //return hi ^ (key.pos.y * 517741 + key.pos.x * 109 + lo);
+    //return key.key_bits ^ (key.pos.y * 111 + key.pos.x * 83);
+    
+    //return key.key_bits ^ (key.pos.y * 107739 + key.pos.x * 2749);
+    
+    return key.key_bits ^ (key.pos.y * 93719 + key.pos.x * 2749);
+    //return key.key_bits ^ (key.pos.y * 2749 + key.pos.x * 7879);
+}
+
+unsigned int min(unsigned int a, unsigned int b) {
+    return a < b ? a : b;
+}
+
+unsigned int memo_hash2(Memo::Key key) {
+    //return key.key_bits ^ (key.pos.y * 107739 + key.pos.x * 83);
+    return key.key_bits ^ (key.pos.y * 2749 + key.pos.x * 7879);
+
+    //int lo = key.key_bits & 0xfffff;
+    //int hi = key.key_bits >> 20;
+    //return lo * key.pos.x + key.pos.y * (hi + (1 << 14));
+    //return lo ^ hi + key.pos.x + key.pos.y * 111;
+    ////return hi ^ (key.pos.y * 517741 + key.pos.x * 109 + lo);
+
     //return key.key_bits ^ (key.pos.y * 107739 + key.pos.x * 83);
     //return key.key_bits ^ (key.pos.y * 111 + key.pos.x * 83);
 }
 
-int memo_hash2(Memo::Key key) {
-    int lo = key.key_bits & 0xfffff;
-    int hi = key.key_bits >> 20;
-    return lo * key.pos.x + key.pos.y * (hi + (1 << 14));
-    //return lo ^ hi + key.pos.x + key.pos.y * 111;
-    //return hi ^ (key.pos.y * 517741 + key.pos.x * 109 + lo);
-    //return key.key_bits ^ (key.pos.y * 107739 + key.pos.x * 83);
-    //return key.key_bits ^ (key.pos.y * 111 + key.pos.x * 83);
-}
+#define MEMO_MAX_SEARCH 100
+//#define MEMO_MAX_SEARCH 20
 
 void memo_put(Memo *memo, Memo::Key key, int distance) {
+    //memo->map[key] = distance;
+    //return;
     if (memo->values_cap - memo->values_n <= memo->values_n / 2) {
-        int new_cap = memo->values_cap * 2 + 4;
+        //int new_cap = memo->values_cap * 2 + 4;
+        int new_cap = (memo->values_cap < 512) ? 512 : memo->values_cap * 4 + 103;
         Memo::Value *new_values = (Memo::Value*)calloc(new_cap, sizeof(Memo::Value));
         for (int i = 0; i < memo->values_cap; i++) {
             Memo::Value v = memo->values[i];
             if (v.key.key_bits == 0) continue;
-            int index_p = memo_hash(v.key);
-            for (int ni = 0; ni < memo->values_cap + 4; ni++) {
-                int index = (index_p + ni) % new_cap;
+            unsigned int index_p = memo_hash(v.key);
+            for (unsigned int ni = 0; ni < memo->values_cap + 4; ni++) {
+                unsigned int index = (index_p + ni) % (unsigned)new_cap;
                 Memo::Value &nv = new_values[index];
                 if (nv.key.key_bits == 0) {
                     nv = v;
@@ -398,13 +457,13 @@ void memo_put(Memo *memo, Memo::Key key, int distance) {
     }
 
     //int max_search = memo->values_cap;
-    int max_search = 100;
+    unsigned int max_search = min(MEMO_MAX_SEARCH, memo->values_cap);
             
-    int index_p = memo_hash(key);
+    unsigned int index_p = memo_hash(key);
     int round = 0;
     while (round < 2) {
-        for (int ni = 0; ni < max_search; ni++) {
-            int index = (index_p + ni) % memo->values_cap;
+        for (unsigned int ni = 0; ni < max_search; ni++) {
+            unsigned int index = (index_p + ni) % (unsigned)memo->values_cap;
             Memo::Value &nv = memo->values[index];
             if (nv.key.key_bits == 0) {
                 nv = {
@@ -415,14 +474,14 @@ void memo_put(Memo *memo, Memo::Key key, int distance) {
                 return;
             }
 
-            if ((index & 127) == 0) printf("Tried index %d\n", index);
+            //if ((index & 127) == 0) printf("Tried index %d\n", index);
         }
         round++;
         index_p = memo_hash2(key);
         max_search /= 2;
     }
 
-    int index = (index_p + max_search) % memo->values_cap;
+    unsigned int index = (index_p + max_search) % (unsigned)memo->values_cap;
     Memo::Value &nv = memo->values[index];
     if (nv.key.key_bits == 0) memo->values_n++;
     nv = {
@@ -436,16 +495,20 @@ void memo_put(Memo *memo, Memo::Key key, int distance) {
 }
 
 bool memo_get(Memo *memo, Memo::Key key, int *distance) {
+    //if (auto result = memo->map.find(key); result != memo->map.end()) {
+    //    *distance = result->second;
+    //    return true;
+    //} else return false;
     if (memo->values_n == 0) return false;
     
     //int max_search = memo->values_cap;
-    int max_search = 100;
+    unsigned int max_search = min(MEMO_MAX_SEARCH, memo->values_cap);
 
-    int index_p = memo_hash(key);
+    unsigned int index_p = memo_hash(key);
     int round = 0;
     while (round < 2) {
-        for (int ni = 0; ni < max_search; ni++) {
-            int index = (index_p + ni) % memo->values_cap;
+        for (unsigned int ni = 0; ni < max_search; ni++) {
+            unsigned index = (index_p + ni) % (unsigned)memo->values_cap;
             const Memo::Value &nv = memo->values[index];
             if (nv.key.pos == key.pos && nv.key.key_bits == key.key_bits) {
                 *distance = nv.dist;
@@ -619,9 +682,9 @@ struct AStar {
     int *map;
 
     int& operator[](Pos pos) {
-        if (!(0 <= pos.x && pos.x < width)) printf("INVALID A* ACCESS [%d,%d]: pos=%d,%d\n", width, height, pos.x, pos.y);
-        if (!(0 <= pos.y && pos.y < height)) printf("INVALID A* ACCESS [%d,%d]: pos=%d,%d\n", width, height, pos.x, pos.y);
-        fflush(stdout);
+        //if (!(0 <= pos.x && pos.x < width)) printf("INVALID A* ACCESS [%d,%d]: pos=%d,%d\n", width, height, pos.x, pos.y);
+        //if (!(0 <= pos.y && pos.y < height)) printf("INVALID A* ACCESS [%d,%d]: pos=%d,%d\n", width, height, pos.x, pos.y);
+        //fflush(stdout);
         return map[pos.y * width + pos.x];
     }
 };
@@ -658,14 +721,14 @@ bool is_valid_pos(Map map, Pos pos) {
     return (pos.x >= 0 && pos.x < map.width) && (pos.y >= 0 && pos.y < map.height);
 }
 
-void astar_fill_dead_ends_(State &st, AStar &astar, Map map, Pos from, Pos pos, int dist, int &filled);
+bool astar_fill_dead_ends_(State &st, AStar &astar, Map map, Pos from, Pos pos, int dist, int &filled);
 
 bool astar_fill_dead_ends_to_(State &st, AStar &astar, Map map, Pos pos, Pos new_pos, int dist, int &filled) {
     if (is_valid_pos(map, new_pos)) {
         char c = map[new_pos];
         if (is_walkable(c)) {
-            astar_fill_dead_ends_(st, astar, map, pos, new_pos, dist + 1, filled);
-            return true;
+            return astar_fill_dead_ends_(st, astar, map, pos, new_pos, dist + 1, filled);
+            //return true;
         } else if (is_door(c)) {
             astar_fill_dead_ends_(st, astar, map, pos, new_pos, dist + 1, filled);
             return true;
@@ -674,9 +737,9 @@ bool astar_fill_dead_ends_to_(State &st, AStar &astar, Map map, Pos pos, Pos new
     return false;
 }
 
-void astar_fill_dead_ends_(State &st, AStar &astar, Map map, Pos from, Pos pos, int dist, int &filled)
+bool astar_fill_dead_ends_(State &st, AStar &astar, Map map, Pos from, Pos pos, int dist, int &filled)
 {
-    if (!astar_update_value(astar, pos, dist)) return;
+    if (!astar_update_value(astar, pos, dist)) return true;
     if (is_key(map[pos])) {
         st_add_reachable_key(st, map[pos]);
     }
@@ -694,13 +757,15 @@ void astar_fill_dead_ends_(State &st, AStar &astar, Map map, Pos from, Pos pos, 
     }
     if (!valid_path) {
         char c = map[pos];
-        if (is_key(c) || is_door(c)) return;
-        map[pos] = '=';
-        print_map(map, st.keys_reachable_bits, {-1,-1});
-        getchar();
+        if (is_key(c) || is_door(c)) return true;
+        //map[pos] = '=';
+        //print_map(map, st.keys_reachable_bits, {-1,-1});
+        //getchar();
         map[pos] = '$';
         filled++;
+        return false;
     }
+    return true;
 }
 
 void astar_fill_dead_ends_in_map(State &st, AStar &astar, Map map, Pos pos)
@@ -714,18 +779,18 @@ void astar_fill_dead_ends_in_map(State &st, AStar &astar, Map map, Pos pos)
         else printf("filled = %d\n", filled);
     }
 
-    getchar();
+    //print_map(map, st.keys_reachable_bits, {-1,-1});
+    //getchar();
 }
 
 
 void astar_calculate_distances_(State &st, AStar &astar, Map map, Pos from, Pos pos, int dist);
 
-void astar_calculate_distances_to_(State &st, AStar &astar, Map map, Pos pos, Pos new_pos, int dist) {
+inline void astar_calculate_distances_to_(State &st, AStar &astar, Map map, Pos pos, Pos new_pos, int dist) {
     if (is_valid_pos(map, new_pos)) {
         char c = map[new_pos];
         if (is_walkable(c)) { // || (st.ignore_doors && is_door(c))) {
             astar_calculate_distances_(st, astar, map, pos, new_pos, dist + 1);
-        } else if (is_door(c)) {
         }
     }
 }
@@ -736,15 +801,74 @@ void astar_calculate_distances_(State &st, AStar &astar, Map map, Pos from, Pos 
     if (is_key(map[pos])) {
         st_add_reachable_key(st, map[pos]);
     }
-    Pos new_pos[4] = {
-        pos.move(-1,  0),
-        pos.move( 1,  0),
-        pos.move( 0, -1),
-        pos.move( 0,  1),
-    };
-    for (int i = 0; i < 4; i++) {
-        if (new_pos[i] != from) {
-            astar_calculate_distances_to_(st, astar, map, pos, new_pos[i], dist);
+    if (from.x < pos.x) {
+        Pos npos1 = pos.move(1, 0);
+        Pos npos2 = pos.move(0, -1);
+        Pos npos3 = pos.move(0, 1);
+        if (is_walkable(map[npos1])) {
+            astar_calculate_distances_(st, astar, map, pos, npos1, dist + 1);
+        }
+        if (is_walkable(map[npos2])) {
+            astar_calculate_distances_(st, astar, map, pos, npos2, dist + 1);
+        }
+        if (is_walkable(map[npos3])) {
+            astar_calculate_distances_(st, astar, map, pos, npos3, dist + 1);
+        }
+    } else if (from.x > pos.x) {
+        Pos npos1 = pos.move(-1, 0);
+        Pos npos2 = pos.move(0, -1);
+        Pos npos3 = pos.move(0, 1);
+        if (is_walkable(map[npos1])) {
+            astar_calculate_distances_(st, astar, map, pos, npos1, dist + 1);
+        }
+        if (is_walkable(map[npos2])) {
+            astar_calculate_distances_(st, astar, map, pos, npos2, dist + 1);
+        }
+        if (is_walkable(map[npos3])) {
+            astar_calculate_distances_(st, astar, map, pos, npos3, dist + 1);
+        }
+    } else if (from.y < pos.y) {
+        Pos npos1 = pos.move(-1, 0);
+        Pos npos2 = pos.move(1, 0);
+        Pos npos3 = pos.move(0, 1);
+        if (is_walkable(map[npos1])) {
+            astar_calculate_distances_(st, astar, map, pos, npos1, dist + 1);
+        }
+        if (is_walkable(map[npos2])) {
+            astar_calculate_distances_(st, astar, map, pos, npos2, dist + 1);
+        }
+        if (is_walkable(map[npos3])) {
+            astar_calculate_distances_(st, astar, map, pos, npos3, dist + 1);
+        }
+    } else if (from.y > pos.y) {
+        Pos npos1 = pos.move(-1, 0);
+        Pos npos2 = pos.move(1, 0);
+        Pos npos3 = pos.move(0, -1);
+        if (is_walkable(map[npos1])) {
+            astar_calculate_distances_(st, astar, map, pos, npos1, dist + 1);
+        }
+        if (is_walkable(map[npos2])) {
+            astar_calculate_distances_(st, astar, map, pos, npos2, dist + 1);
+        }
+        if (is_walkable(map[npos3])) {
+            astar_calculate_distances_(st, astar, map, pos, npos3, dist + 1);
+        }
+    } else {
+        Pos new_pos[4] = {
+            pos.move(-1,  0),
+            pos.move( 1,  0),
+            pos.move( 0, -1),
+            pos.move( 0,  1),
+        };
+        for (int i = 0; i < 4; i++) {
+            Pos npos = new_pos[i];
+            if (new_pos[i] != from) {
+                //astar_calculate_distances_to_(st, astar, map, pos, new_pos[i], dist);
+                //if (is_valid_pos(map, npos) && is_walkable(map[npos])) {
+                if (is_walkable(map[npos])) {
+                    astar_calculate_distances_(st, astar, map, pos, npos, dist + 1);
+                }
+            }
         }
     }
 }
@@ -783,23 +907,26 @@ void print_state(State &st) {
     printf("\n");
 }
 
-void open_door(State &st, Map map, char key) {
+int open_door(State &st, Map map, char key) {
     for (int i = 0; i < st.doors_in_map_n; i++) {
         if (st.doors_in_map[i].key == key) {
             map[st.doors_in_map[i].position] = '.';
-            return;
+            return i;
         }
     }
+    return 0;
 }
 
-void close_door(State &st, Map map, char key) {
-    for (int i = 0; i < st.doors_in_map_n; i++) {
-        Door door = st.doors_in_map[i];
-        if (door.key == key) {
-            map[door.position] = door.door;
-            return;
-        }
-    }
+void close_door(State &st, Map map, int door_index) {
+    Door door = st.doors_in_map[door_index];
+    map[door.position] = door.door;
+    //for (int i = 0; i < st.doors_in_map_n; i++) {
+    //    Door door = st.doors_in_map[i];
+    //    if (door.key == key) {
+    //        map[door.position] = door.door;
+    //        return;
+    //    }
+    //}
 }
 
 int take_step(State &initial_st, AStar &astar, Map map, Pos pos, int depth);
@@ -809,21 +936,32 @@ int take_key(State st, AStar &prev_astar, AStar &astar, Map map, int key_index, 
     Key key = st.keys_reachable[key_index];
     //printf("Take key %d %c\n", key_index, key.key);
 
-    open_door(st, map, key.key);
+    int door_index = open_door(st, map, key.key);
 
     int dist = prev_astar[key.position];
     //printf("Dist to key (%d,%d) = %d\n", key.position.x, key.position.y, dist);
-    int result = take_step(st, astar, map, key.position, depth) + dist;
+    int result;
+    if (true) {
+        result = take_step(st, astar, map, key.position, depth) + dist;
+    } else {
+        Map new_map = map_copy(map);
+        astar_fill_dead_ends_in_map(st, astar, new_map, key.position);
+        result = take_step(st, astar, new_map, key.position, depth) + dist;
+        map_free(new_map);
+    }
 
-    close_door(st, map, key.key);
+    close_door(st, map, door_index);
 
     return result;
 }
 
+unsigned steps;
+
 int take_step(State &initial_st, AStar &astar, Map map, Pos pos, int depth)
 {
+    steps++;
     char save_c = map[pos];
-    map[pos] = '.';
+    map[pos] = '@';
     State st = initial_st;
 
     astar_calculate_distances_from_map(st, astar, map, pos);
@@ -844,7 +982,7 @@ int take_step(State &initial_st, AStar &astar, Map map, Pos pos, int depth)
         AStar new_astar = astar_alloc(map.width, map.height);
         int min_dist = take_key(st, astar, new_astar, map, 0, depth + 1);
         for (int i = 1; i < st.keys_reachable_n; i++) {
-            if (depth < 8) printf("%d: %d/%d keys tested\n", depth, i, st.keys_reachable_n);
+            if (depth < 2) printf("%d: %d/%d keys tested\n", depth, i, st.keys_reachable_n);
             int dist = take_key(st, astar, new_astar, map, i, depth + 1);
             if (dist < min_dist) min_dist = dist;
         }
@@ -888,7 +1026,9 @@ void part_one()
 
     //Map map = map_from_string(sample3::map_data);
     Map map = map_from_file("input.txt");
-    Memo memo = {};
+    Memo memo = {
+        //.map = std::unordered_map<Memo::Key, int, Memo::KeyHash, Memo::KeyEq>()
+    };
     State state = { .memo = &memo };
     find_objects(&state, map);
 
@@ -910,7 +1050,7 @@ void part_one()
 
     printf("Astar %u ms, %u ms total\n",
            (uint32_t)(a_star_time_nanos/1000000), (uint32_t)(total_time_nanos/1000000));
-    printf("Part 1 - result: %d\n", result);
+    printf("Part 1 - result: %d - %u steps\n", result, steps);
 }
 
 int main(int argc, char **argv)
