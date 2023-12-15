@@ -1005,6 +1005,35 @@ AStar astar_copy(AStar astar) {
     return result;
 }
 
+struct AStarStack {
+    AStar a[10000];
+    int current;
+    int allocated;
+};
+
+AStar& astar_stack_push(AStarStack &stack) {
+    assert(stack.current + 1 < 10000);
+    if (stack.allocated < stack.current + 1) {
+        stack.a[stack.allocated + 1] = astar_alloc(stack.a[0].width, stack.a[0].height);
+        stack.allocated++;
+    }
+    AStar &current = stack.a[stack.current];
+    AStar &result = stack.a[stack.current + 1];
+    mempcpy(result.map, current.map, current.width * current.height * sizeof(int));
+    stack.current++;
+    return result;
+}
+
+void astar_stack_pop(AStarStack &stack) {
+    stack.current--;
+}
+
+AStar& astar_stack_current(AStarStack &stack) {
+    return stack.a[stack.current];
+}
+
+
+
 void edges_add_edge(Edges *edges, char key, Pos pos, uint32_t doors_mask, int dist) {
     Edge edge {
         .dest {
@@ -1024,22 +1053,14 @@ bool is_traversable(char c) {
     return (c == '.') || (c == '@') || is_key(c) || is_door(c);
 }
 
-//struct AStarStack {
-//    AStar a[100];
-//    int allocated;
-//};
-//
-//AStar& astar_stack_next(AStarStack &stack) {
-//
-//}
-//AStar &astar = astar_stack_current(st);
+void astar_to_west(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, int dist);
+void astar_to_east(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, int dist);
+void astar_to_north(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, int dist);
+void astar_to_south(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, int dist);
 
-void astar_to_west(Edges *edges, AStar &astar, Map map, Pos from, uint32_t doors_mask, int dist);
-void astar_to_east(Edges *edges, AStar &astar, Map map, Pos from, uint32_t doors_mask, int dist);
-void astar_to_north(Edges *edges, AStar &astar, Map map, Pos from, uint32_t doors_mask, int dist);
-void astar_to_south(Edges *edges, AStar &astar, Map map, Pos from, uint32_t doors_mask, int dist);
+void astar_to_west(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, int dist) {
+    AStar &astar = astar_stack_current(st);
 
-void astar_to_west(Edges *edges, AStar &astar, Map map, Pos from, uint32_t doors_mask, int dist) {
     // ASSUMPTION: map is bordered with walls => No bounds check needed
     Pos pos = from.move(-1, 0);
     char c = map[pos];
@@ -1055,14 +1076,16 @@ void astar_to_west(Edges *edges, AStar &astar, Map map, Pos from, uint32_t doors
         doors_mask |= door_bit;
     }
 
-    AStar branch = astar_copy(astar);
-    astar_to_west(edges, branch, map, pos, doors_mask, dist + 1);
-    astar_to_north(edges, branch, map, pos, doors_mask, dist + 1);
-    astar_to_south(edges, branch, map, pos, doors_mask, dist + 1);
-    astar_free(branch);
+    astar_stack_push(st);
+    astar_to_west(edges, st, map, pos, doors_mask, dist + 1);
+    astar_to_north(edges, st, map, pos, doors_mask, dist + 1);
+    astar_to_south(edges, st, map, pos, doors_mask, dist + 1);
+    astar_stack_push(st);
 }
 
-void astar_to_east(Edges *edges, AStar &astar, Map map, Pos from, uint32_t doors_mask, int dist) {
+void astar_to_east(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, int dist) {
+    AStar &astar = astar_stack_current(st);
+
     Pos pos = from.move(1, 0);
     if (!is_traversable(map[pos])) return;
 
@@ -1076,14 +1099,16 @@ void astar_to_east(Edges *edges, AStar &astar, Map map, Pos from, uint32_t doors
         doors_mask |= door_bit;
     }
 
-    AStar branch = astar_copy(astar);
-    astar_to_east(edges, branch, map, pos, doors_mask, dist + 1);
-    astar_to_north(edges, branch, map, pos, doors_mask, dist + 1);
-    astar_to_south(edges, branch, map, pos, doors_mask, dist + 1);
-    astar_free(branch);
+    astar_stack_push(st);
+    astar_to_east(edges, st, map, pos, doors_mask, dist + 1);
+    astar_to_north(edges, st, map, pos, doors_mask, dist + 1);
+    astar_to_south(edges, st, map, pos, doors_mask, dist + 1);
+    astar_stack_pop(st);
 }
 
-void astar_to_north(Edges *edges, AStar &astar, Map map, Pos from, uint32_t doors_mask, int dist) {
+void astar_to_north(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, int dist) {
+    AStar &astar = astar_stack_current(st);
+
     Pos pos = from.move(0, -1);
     if (!is_traversable(map[pos])) return;
 
@@ -1097,14 +1122,16 @@ void astar_to_north(Edges *edges, AStar &astar, Map map, Pos from, uint32_t door
         doors_mask |= door_bit;
     }
 
-    AStar branch = astar_copy(astar);
-    astar_to_north(edges, branch, map, pos, doors_mask, dist + 1);
-    astar_to_east(edges, branch, map, pos, doors_mask, dist + 1);
-    astar_to_west(edges, branch, map, pos, doors_mask, dist + 1);
-    astar_free(branch);
+    astar_stack_push(st);
+    astar_to_north(edges, st, map, pos, doors_mask, dist + 1);
+    astar_to_east(edges, st, map, pos, doors_mask, dist + 1);
+    astar_to_west(edges, st, map, pos, doors_mask, dist + 1);
+    astar_stack_pop(st);
 }
 
-void astar_to_south(Edges *edges, AStar &astar, Map map, Pos from, uint32_t doors_mask, int dist) {
+void astar_to_south(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, int dist) {
+    AStar &astar = astar_stack_current(st);
+
     Pos pos = from.move(0, 1);
     if (!is_traversable(map[pos])) return;
 
@@ -1118,11 +1145,11 @@ void astar_to_south(Edges *edges, AStar &astar, Map map, Pos from, uint32_t door
         doors_mask |= door_bit;
     }
 
-    AStar branch = astar_copy(astar);
-    astar_to_south(edges, branch, map, pos, doors_mask, dist + 1);
-    astar_to_east(edges, branch, map, pos, doors_mask, dist + 1);
-    astar_to_west(edges, branch, map, pos, doors_mask, dist + 1);
-    astar_free(branch);
+    astar_stack_push(st);
+    astar_to_south(edges, st, map, pos, doors_mask, dist + 1);
+    astar_to_east(edges, st, map, pos, doors_mask, dist + 1);
+    astar_to_west(edges, st, map, pos, doors_mask, dist + 1);
+    astar_stack_pop(st);
 }
 
 bool compare_edge(Edge a, Edge b) {
@@ -1135,12 +1162,14 @@ void print_edges(char c, Edges edges);
 
 void astar_calculate_edges(Edges *edges, AStar &astar, Map map, Pos from) {
     astar_init(&astar);
+    AStarStack stack = {};
+    stack.a[0] = astar;
 
     edges->from = from;
-    astar_to_west(edges, astar, map, from, 0u, 1);
-    astar_to_east(edges, astar, map, from, 0u, 1);
-    astar_to_north(edges, astar, map, from, 0u, 1);
-    astar_to_south(edges, astar, map, from, 0u, 1);
+    astar_to_west(edges, stack, map, from, 0u, 1);
+    astar_to_east(edges, stack, map, from, 0u, 1);
+    astar_to_north(edges, stack, map, from, 0u, 1);
+    astar_to_south(edges, stack, map, from, 0u, 1);
 
     // Sort the edges with descending key and distance
     Edge *es = edges->edges;
