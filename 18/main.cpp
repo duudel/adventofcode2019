@@ -291,7 +291,7 @@ struct Objects {
     Door doors_in_map[26];
     int doors_in_map_n;
 
-    Pos start_position;
+    Pos start_position[4];
 };
 
 void map_find_objects(Objects *objects, Map map)
@@ -317,7 +317,7 @@ void map_find_objects(Objects *objects, Map map)
                 };
                 objects->doors_in_map_n++;
             } else if (c == '@') {
-                objects->start_position = {x, y};
+                objects->start_position[0] = {x, y};
             }
         }
     }
@@ -651,12 +651,13 @@ void ctx_clear_reachable_keys(Context &ctx) {
     ctx.keys_reachable_bits = 0;
 }
 
+typedef uint16_t ASint;
 
 struct AStar {
     int width, height;
-    int *map;
+    ASint *map;
 
-    int& operator[](Pos pos) {
+    ASint& operator[](Pos pos) {
         //if (!(0 <= pos.x && pos.x < width)) printf("INVALID A* ACCESS [%d,%d]: pos=%d,%d\n", width, height, pos.x, pos.y);
         //if (!(0 <= pos.y && pos.y < height)) printf("INVALID A* ACCESS [%d,%d]: pos=%d,%d\n", width, height, pos.x, pos.y);
         //fflush(stdout);
@@ -665,7 +666,7 @@ struct AStar {
 };
 
 AStar astar_alloc(int width, int height) {
-    int *data = (int*)calloc(width * height, sizeof(int));
+    ASint *data = (ASint*)calloc(width * height, sizeof(ASint));
     return {
         .width = width,
         .height = height,
@@ -679,7 +680,7 @@ void astar_free(AStar &astar) {
 
 void astar_init(AStar *astar) {
     const int N = astar->width * astar->height;
-    for (int i = 0; i < N; i++) astar->map[i] = 999999;
+    for (int i = 0; i < N; i++) astar->map[i] = 9999;
 }
 
 bool astar_update_value(AStar &astar, Pos pos, int new_value)
@@ -960,12 +961,12 @@ void part_one()
     printf("map size [%d,%d]\n", map.width, map.height);
     printf("%d keys\n", ctx.objects.keys_in_map_n);
     printf("%d doors\n", ctx.objects.doors_in_map_n);
-    printf("start at %d,%d\n", ctx.objects.start_position.x, ctx.objects.start_position.y);
+    printf("start at %d,%d\n", ctx.objects.start_position[0].x, ctx.objects.start_position[0].y);
 
     AStar astar = astar_alloc(map.width, map.height);
-    astar_fill_dead_ends_in_map(astar, map, ctx.objects.start_position);
+    astar_fill_dead_ends_in_map(astar, map, ctx.objects.start_position[0]);
 
-    int result = take_step(ctx, astar, map, ctx.objects.start_position, 0);
+    int result = take_step(ctx, astar, map, ctx.objects.start_position[0], 0);
     astar_free(astar);
 
     print_memo(&memo);
@@ -983,6 +984,7 @@ void part_one()
 struct Edge {
     Key dest;
     uint32_t doors_mask;
+    uint32_t keys_mask;
     int dist;
 };
 
@@ -993,7 +995,7 @@ struct Edges {
 };
 
 struct Precomp {
-    Edges for_start;
+    Edges for_start[4];
     Edges for_keys[26];
 
     uint32_t all_keys_mask;
@@ -1001,7 +1003,7 @@ struct Precomp {
 
 AStar astar_copy(AStar astar) {
     AStar result = astar_alloc(astar.width, astar.height);
-    mempcpy(result.map, astar.map, astar.width * astar.height * sizeof(int));
+    mempcpy(result.map, astar.map, astar.width * astar.height * sizeof(ASint));
     return result;
 }
 
@@ -1019,7 +1021,7 @@ AStar& astar_stack_push(AStarStack &stack) {
     }
     AStar &current = stack.a[stack.current];
     AStar &result = stack.a[stack.current + 1];
-    mempcpy(result.map, current.map, current.width * current.height * sizeof(int));
+    mempcpy(result.map, current.map, current.width * current.height * sizeof(ASint));
     stack.current++;
     return result;
 }
@@ -1034,18 +1036,24 @@ AStar& astar_stack_current(AStarStack &stack) {
 
 
 
-void edges_add_edge(Edges *edges, char key, Pos pos, uint32_t doors_mask, int dist) {
+void edges_add_edge(Edges *edges, char key, Pos pos, uint32_t doors_mask, uint32_t keys_mask, int dist) {
     Edge edge {
         .dest {
             .key = key,
             .position = pos,
         },
         .doors_mask = doors_mask,
+        .keys_mask = keys_mask,
         .dist = dist,
     };
     int n = edges->edges_n;
     edges->edges_n++;
-    edges->edges = (Edge*)realloc(edges->edges, edges->edges_n * sizeof(Edge));
+    if ((edges->edges_n & (edges->edges_n - 1)) == 0) {
+        // is power of 2, lets resize
+        int next_cap = edges->edges_n << 1;
+        edges->edges = (Edge*)realloc(edges->edges, next_cap * sizeof(Edge));
+    }
+    //edges->edges = (Edge*)realloc(edges->edges, edges->edges_n * sizeof(Edge));
     edges->edges[n] = edge;
 }
 
@@ -1053,12 +1061,12 @@ bool is_traversable(char c) {
     return (c == '.') || (c == '@') || is_key(c) || is_door(c);
 }
 
-void astar_to_west(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, int dist);
-void astar_to_east(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, int dist);
-void astar_to_north(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, int dist);
-void astar_to_south(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, int dist);
+void astar_to_west(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, uint32_t keys_mask, int dist);
+void astar_to_east(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, uint32_t keys_mask, int dist);
+void astar_to_north(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, uint32_t keys_mask, int dist);
+void astar_to_south(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, uint32_t keys_mask, int dist);
 
-void astar_to_west(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, int dist) {
+void astar_to_west(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, uint32_t keys_mask, int dist) {
     AStar &astar = astar_stack_current(st);
 
     // ASSUMPTION: map is bordered with walls => No bounds check needed
@@ -1070,85 +1078,99 @@ void astar_to_west(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doo
     if (!astar_update_value(astar, pos, dist)) return;
 
     if (is_key(c)) {
-        edges_add_edge(edges, c, pos, doors_mask, dist);
+        uint32_t key_bit = 1u << (c - 'a');
+        keys_mask |= key_bit;
+        edges_add_edge(edges, c, pos, doors_mask, keys_mask, dist);
     } else if (is_door(c)) {
         uint32_t door_bit = 1u << (c - 'A');
         doors_mask |= door_bit;
     }
 
     astar_stack_push(st);
-    astar_to_west(edges, st, map, pos, doors_mask, dist + 1);
-    astar_to_north(edges, st, map, pos, doors_mask, dist + 1);
-    astar_to_south(edges, st, map, pos, doors_mask, dist + 1);
+    astar_to_west(edges, st, map, pos, doors_mask, keys_mask, dist + 1);
+    astar_to_north(edges, st, map, pos, doors_mask, keys_mask, dist + 1);
+    astar_to_south(edges, st, map, pos, doors_mask, keys_mask, dist + 1);
     astar_stack_push(st);
 }
 
-void astar_to_east(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, int dist) {
+void astar_to_east(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, uint32_t keys_mask, int dist) {
     AStar &astar = astar_stack_current(st);
 
+    // ASSUMPTION: map is bordered with walls => No bounds check needed
     Pos pos = from.move(1, 0);
-    if (!is_traversable(map[pos])) return;
+    char c = map[pos];
+    if (c == '#') return;
+    //if (!is_traversable(c)) return;
 
     if (!astar_update_value(astar, pos, dist)) return;
 
-    char c = map[pos];
     if (is_key(c)) {
-        edges_add_edge(edges, c, pos, doors_mask, dist);
+        uint32_t key_bit = 1u << (c - 'a');
+        keys_mask |= key_bit;
+        edges_add_edge(edges, c, pos, doors_mask, keys_mask, dist);
     } else if (is_door(c)) {
         uint32_t door_bit = 1u << (c - 'A');
         doors_mask |= door_bit;
     }
 
     astar_stack_push(st);
-    astar_to_east(edges, st, map, pos, doors_mask, dist + 1);
-    astar_to_north(edges, st, map, pos, doors_mask, dist + 1);
-    astar_to_south(edges, st, map, pos, doors_mask, dist + 1);
+    astar_to_east(edges, st, map, pos, doors_mask, keys_mask, dist + 1);
+    astar_to_north(edges, st, map, pos, doors_mask, keys_mask, dist + 1);
+    astar_to_south(edges, st, map, pos, doors_mask, keys_mask, dist + 1);
     astar_stack_pop(st);
 }
 
-void astar_to_north(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, int dist) {
+void astar_to_north(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, uint32_t keys_mask, int dist) {
     AStar &astar = astar_stack_current(st);
 
+    // ASSUMPTION: map is bordered with walls => No bounds check needed
     Pos pos = from.move(0, -1);
-    if (!is_traversable(map[pos])) return;
+    char c = map[pos];
+    if (c == '#') return;
+    //if (!is_traversable(c)) return;
 
     if (!astar_update_value(astar, pos, dist)) return;
 
-    char c = map[pos];
     if (is_key(c)) {
-        edges_add_edge(edges, c, pos, doors_mask, dist);
+        uint32_t key_bit = 1u << (c - 'a');
+        keys_mask |= key_bit;
+        edges_add_edge(edges, c, pos, doors_mask, keys_mask, dist);
     } else if (is_door(c)) {
         uint32_t door_bit = 1u << (c - 'A');
         doors_mask |= door_bit;
     }
 
     astar_stack_push(st);
-    astar_to_north(edges, st, map, pos, doors_mask, dist + 1);
-    astar_to_east(edges, st, map, pos, doors_mask, dist + 1);
-    astar_to_west(edges, st, map, pos, doors_mask, dist + 1);
+    astar_to_north(edges, st, map, pos, doors_mask, keys_mask, dist + 1);
+    astar_to_east(edges, st, map, pos, doors_mask, keys_mask, dist + 1);
+    astar_to_west(edges, st, map, pos, doors_mask, keys_mask, dist + 1);
     astar_stack_pop(st);
 }
 
-void astar_to_south(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, int dist) {
+void astar_to_south(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, uint32_t keys_mask, int dist) {
     AStar &astar = astar_stack_current(st);
 
+    // ASSUMPTION: map is bordered with walls => No bounds check needed
     Pos pos = from.move(0, 1);
-    if (!is_traversable(map[pos])) return;
+    char c = map[pos];
+    if (c == '#') return;
+    //if (!is_traversable(c)) return;
 
     if (!astar_update_value(astar, pos, dist)) return;
 
-    char c = map[pos];
     if (is_key(c)) {
-        edges_add_edge(edges, c, pos, doors_mask, dist);
+        uint32_t key_bit = 1u << (c - 'a');
+        keys_mask |= key_bit;
+        edges_add_edge(edges, c, pos, doors_mask, keys_mask, dist);
     } else if (is_door(c)) {
         uint32_t door_bit = 1u << (c - 'A');
         doors_mask |= door_bit;
     }
 
     astar_stack_push(st);
-    astar_to_south(edges, st, map, pos, doors_mask, dist + 1);
-    astar_to_east(edges, st, map, pos, doors_mask, dist + 1);
-    astar_to_west(edges, st, map, pos, doors_mask, dist + 1);
+    astar_to_south(edges, st, map, pos, doors_mask, keys_mask, dist + 1);
+    astar_to_east(edges, st, map, pos, doors_mask, keys_mask, dist + 1);
+    astar_to_west(edges, st, map, pos, doors_mask, keys_mask, dist + 1);
     astar_stack_pop(st);
 }
 
@@ -1166,10 +1188,10 @@ void astar_calculate_edges(Edges *edges, AStar &astar, Map map, Pos from) {
     stack.a[0] = astar;
 
     edges->from = from;
-    astar_to_west(edges, stack, map, from, 0u, 1);
-    astar_to_east(edges, stack, map, from, 0u, 1);
-    astar_to_north(edges, stack, map, from, 0u, 1);
-    astar_to_south(edges, stack, map, from, 0u, 1);
+    astar_to_west(edges, stack, map, from, 0u, 0u, 1);
+    astar_to_east(edges, stack, map, from, 0u, 0u, 1);
+    astar_to_north(edges, stack, map, from, 0u, 0u, 1);
+    astar_to_south(edges, stack, map, from, 0u, 0u, 1);
 
     // Sort the edges with descending key and distance
     Edge *es = edges->edges;
@@ -1207,17 +1229,19 @@ void astar_calculate_edges(Edges *edges, AStar &astar, Map map, Pos from) {
     edges->edges_n = new_n;
 }
 
-Precomp precompute(Map map, Objects objects) {
+Precomp precompute(Map map, Objects objects, int start_position_num) {
     uint64_t start_time = perf_time_nanos();
     Precomp result = {};
 
     uint32_t keys_mask = 0u;
 
     AStar astar = astar_alloc(map.width, map.height);
-    uint64_t a_start_time = perf_time_nanos();
-    astar_calculate_edges(&result.for_start, astar, map, objects.start_position);
-    uint64_t a_elapsed = perf_time_elapsed_nanos(a_start_time);
-    printf("'%c' took %d ms\n", '@', (int)(a_elapsed / 1000'000));
+    for (int i = 0; i < start_position_num; i++) {
+        uint64_t a_start_time = perf_time_nanos();
+        astar_calculate_edges(&result.for_start[i], astar, map, objects.start_position[i]);
+        uint64_t a_elapsed = perf_time_elapsed_nanos(a_start_time);
+        printf("'%c'%d took %d ms\n", '@', i + 1, (int)(a_elapsed / 1000'000));
+    }
     for (int i = 0; i < objects.keys_in_map_n; i++) {
         uint64_t a_start_time = perf_time_nanos();
 
@@ -1247,42 +1271,24 @@ int key_to_index(char key) {
 }
 
 int traverse(Memo *memo, const Precomp &pc, char pos, uint32_t door_mask) {
-    const Edges *edges;
-    if (pos == '@') {
-        edges = &pc.for_start;
-    } else {
-        assert(is_key(pos));
-        door_mask |= door_to_bit(key_to_door(pos));
-        edges = pc.for_keys + key_to_index(pos);
+    assert(is_key(pos));
+    const Edges *edges = pc.for_keys + key_to_index(pos);
+    //door_mask |= door_to_bit(key_to_door(pos));
     
-        if (door_mask == pc.all_keys_mask) {
-            //char key = 'a';
-            //while (door_mask != 0) {
-            //    if (door_mask & 1) {
-            //        putchar(key);
-            //    }
-            //    door_mask >>= 1;
-            //    key++;
-            //}
-            //printf("; dist=%d\n", dist);
-
-            //Memo::Key mk = Memo::Key{.pos={pos, 0}, .key_bits=0};
-            ////Memo::Key mk = Memo::Key{.pos={pos, 0}, .key_bits=door_mask};
-            //memo_put(memo, mk, dist);
-            return 0;
-        }
+    if (door_mask == pc.all_keys_mask) {
+        //char key = 'a';
+        //while (door_mask != 0) {
+        //    if (door_mask & 1) {
+        //        putchar(key);
+        //    }
+        //    door_mask >>= 1;
+        //    key++;
+        //}
+        //printf("; dist=%d\n", dist);
+        return 0;
     }
 
-    uint32_t reachable_mask = 0u;
-    for (int i = 0; i < edges->edges_n; i++) {
-        Edge edge = edges->edges[i];
-        uint32_t bit = door_to_bit(key_to_door(edge.dest.key));
-        bool already_traversed = (door_mask & bit) != 0;
-        if (!already_traversed && (edge.doors_mask & door_mask) == edge.doors_mask) {
-            reachable_mask |= bit;
-        }
-    }
-    Memo::Key mk = Memo::Key{.pos={pos, 0}, .key_bits=reachable_mask};
+    Memo::Key mk = Memo::Key{.pos={pos, 0}, .key_bits=door_mask};
     int memo_result;
     if (memo_get(memo, mk, &memo_result)) {
         //print_memo(memo);
@@ -1293,9 +1299,9 @@ int traverse(Memo *memo, const Precomp &pc, char pos, uint32_t door_mask) {
     int min_dist = -1;
     for (int i = 0; i < edges->edges_n; i++) {
         Edge edge = edges->edges[i];
-        bool already_traversed = (door_mask & door_to_bit(key_to_door(edge.dest.key))) != 0;
-        if (!already_traversed && (edge.doors_mask & door_mask) == edge.doors_mask) {
-            int d = traverse(memo, pc, edge.dest.key, door_mask) + edge.dist;
+        bool not_already_traversed = (door_mask & door_to_bit(key_to_door(edge.dest.key))) == 0;
+        if (not_already_traversed && (edge.doors_mask & door_mask) == edge.doors_mask) {
+            int d = traverse(memo, pc, edge.dest.key, door_mask | edge.keys_mask) + edge.dist;
             min_dist = (min_dist == -1 || d < min_dist) ? d : min_dist;
         }
     }
@@ -1312,6 +1318,38 @@ int traverse(Memo *memo, const Precomp &pc, char pos, uint32_t door_mask) {
     //printf("; at=%c dist=%d\n", pos, min_dist);
 
     memo_put(memo, mk, min_dist);
+    return min_dist;
+}
+
+int traverse_start(Memo *memo, const Precomp &pc, char pos, int start_index, uint32_t door_mask) {
+    assert(pos == '@');
+    const Edges *edges = &pc.for_start[start_index];
+
+    int min_dist = -1;
+    for (int i = 0; i < edges->edges_n; i++) {
+        Edge edge = edges->edges[i];
+        //bool not_already_traversed = (door_mask & door_to_bit(key_to_door(edge.dest.key))) == 0;
+        //if (not_already_traversed && (edge.doors_mask & door_mask) == edge.doors_mask) {
+        //    int d = traverse(memo, pc, edge.dest.key, door_mask) + edge.dist;
+        //    min_dist = (min_dist == -1 || d < min_dist) ? d : min_dist;
+        //}
+        if ((edge.doors_mask & door_mask) == edge.doors_mask) {
+            int d = traverse(memo, pc, edge.dest.key, door_mask) + edge.dist;
+            min_dist = (min_dist == -1 || d < min_dist) ? d : min_dist;
+        }
+    }
+    assert(min_dist != -1);
+
+    //char key = 'a';
+    //while (door_mask != 0) {
+    //    if (door_mask & 1) {
+    //        putchar(key);
+    //    }
+    //    door_mask >>= 1;
+    //    key++;
+    //}
+    //printf("; at=%c dist=%d\n", pos, min_dist);
+
     return min_dist;
 }
 
@@ -1336,8 +1374,14 @@ void print_edges(char c, Edges edges) {
     }
 }
 
-void precomp_print(const Precomp &precomp) {
-    print_edges('@', precomp.for_start);
+void precomp_print(const Precomp &precomp, int n) {
+    for (int i = 0; i < n; i++) {
+        print_edges('@', precomp.for_start[i]);
+    }
+    for (int i = 0; i < 26; i++) {
+        auto es = precomp.for_keys[i];
+        if (es.edges_n) print_edges('a' + i, es);
+    }
 }
 
 void part_one_take2()
@@ -1354,17 +1398,17 @@ void part_one_take2()
     if (1) {
         uint64_t start_time = perf_time_nanos();
         AStar astar = astar_alloc(map.width, map.height);
-        astar_fill_dead_ends_in_map(astar, map, objects.start_position);
+        astar_fill_dead_ends_in_map(astar, map, objects.start_position[0]);
         uint64_t total_time_nanos = perf_time_elapsed_nanos(start_time);
         printf("Filling dead ends took %d ms\n", (int)(total_time_nanos / 1000'000));
     }
 
     Memo memo = { };
-    Precomp precomp = precompute(map, objects);
+    Precomp precomp = precompute(map, objects, 1);
     //precomp_print(precomp);
 
     uint64_t traverse_start_time = perf_time_nanos();
-    int result = traverse(&memo, precomp, '@', 0u);
+    int result = traverse_start(&memo, precomp, '@', 0, 0u);
     //print_memo(&memo);
     uint64_t traverse_time_nanos = perf_time_elapsed_nanos(traverse_start_time);
     uint64_t total_time_nanos = perf_time_elapsed_nanos(start_time);
@@ -1374,10 +1418,256 @@ void part_one_take2()
     printf("Part 1 - result: %d\n", result);
 }
 
+void patch_map(Map map, Objects *objects) {
+    Pos origin = objects->start_position[0];
+    map[origin.move(-1, -1)] = '@';
+    map[origin.move( 0, -1)] = '#';
+    map[origin.move( 1, -1)] = '@';
+    map[origin.move(-1,  0)] = '#';
+    map[origin.move( 0,  0)] = '#';
+    map[origin.move( 1,  0)] = '#';
+    map[origin.move(-1,  1)] = '@';
+    map[origin.move( 0,  1)] = '#';
+    map[origin.move( 1,  1)] = '@';
+    objects->start_position[0] = origin.move(-1, -1);
+    objects->start_position[1] = origin.move( 1, -1);
+    objects->start_position[2] = origin.move(-1,  1);
+    objects->start_position[3] = origin.move( 1,  1);
+}
+
+struct Robots {
+    char pos[4];
+};
+
+struct Result {
+    char keys[26];
+    int dist[26];
+    int num;
+};
+
+void print_result(Result res, int dist) {
+    printf("Result: ");
+    int total_dist = 0;
+    for (int i = 0; i < res.num+1; i++) {
+    //for (int i = 0; i < 26; i++) {
+        if (res.keys[i]) {
+            printf("%c: %d, ", res.keys[i], res.dist[i]);
+            //putchar(res.keys[i]);
+        }
+        total_dist += res.dist[i];
+    }
+    printf(" => %d\n", total_dist);
+}
+
+void print_keys(uint32_t keys_mask) {
+    char key = 'a';
+    while (keys_mask != 0) {
+        if (keys_mask & 1) {
+            putchar(key);
+        }
+        keys_mask >>= 1;
+        key++;
+    }
+}
+
+int traverse_starts(Memo *memo, const Precomp &pc, Robots robots, uint32_t door_mask, Result &result);
+
+int traverse_take_edge(Memo *memo, const Precomp &pc, Robots robots, int robot_index, Edge edge, uint32_t door_mask, Result &result) {
+    printf("Bot %d takes edge to %c - keys: ", robot_index, edge.dest.key);
+    print_keys(door_mask);
+    printf(" edge contains keys: ");
+    print_keys(edge.keys_mask);
+    printf("\n");
+
+    Robots next = robots;
+    next.pos[robot_index] = edge.dest.key;
+
+    result.keys[result.num] = edge.dest.key;
+    result.dist[result.num] = edge.dist;
+
+    result.num++;
+    int d = traverse_starts(memo, pc, next, door_mask | edge.keys_mask, result) + edge.dist;
+    result.num--;
+
+    print_result(result, 0);
+    return d;
+}
+
+int traverse_starts(Memo *memo, const Precomp &pc, Robots robots, uint32_t door_mask, Result &result) {
+    //const Edges *edges;
+    //char p = robots.pos[robot_index];
+    //if (p == '@') {
+    //    edges = &pc.for_start[robot_index];
+    //} else {
+    //    assert(is_key(p));
+    //    edges = &pc.for_keys[key_to_index(p)];
+    //    door_mask |= door_to_bit(key_to_door(p));
+
+    //    if (door_mask == pc.all_keys_mask) {
+    //        return 0;
+    //    }
+    //}
+
+    //char p = robots.pos[robot_index];
+    //if (is_key(p)) {
+    //    door_mask |= door_to_bit(key_to_door(p));
+
+    //    if (door_mask == pc.all_keys_mask) {
+    //        print_result(result, 0);
+    //        return 0;
+    //    }
+    //}
+
+    //Memo::Key mk = Memo::Key{.pos={p, 0}, .key_bits=door_mask};
+    //int memo_result;
+    //if (memo_get(memo, mk, &memo_result)) {
+    //    //print_memo(memo);
+    //    //printf("Memo: %c %x\n", pos, door_mask);
+    //    return memo_result;
+    //}
+
+    int min_dist = -1;
+    for (int ri = 0; ri < 4; ri++) {
+        char p = robots.pos[ri];
+
+        //Memo::Key mk = Memo::Key{.pos={p, ri}, .key_bits=door_mask};
+        //int memo_result;
+        //if (memo_get(memo, mk, &memo_result)) {
+        //    printf("memo: %d\n", memo_result);
+        //    min_dist = (min_dist == -1 || memo_result < min_dist) ? memo_result : min_dist;
+        //    continue;
+        //    //return memo_result;
+        //}
+
+        const Edges *edges;
+        if (p == '@') {
+            edges = &pc.for_start[ri];
+        } else {
+            assert(is_key(p));
+
+            //door_mask |= door_to_bit(key_to_door(p));
+            if (door_mask == pc.all_keys_mask) {
+                return 0;
+            }
+            edges = &pc.for_keys[key_to_index(p)];
+        }
+
+        for (int i = 0; i < edges->edges_n; i++) {
+            Edge edge = edges->edges[i];
+            bool not_already_traversed = (door_mask & door_to_bit(key_to_door(edge.dest.key))) == 0;
+            if (not_already_traversed && (edge.doors_mask & door_mask) == edge.doors_mask) {
+                #if 0
+                printf("Bot %d takes edge to %c - keys: ", ri, edge.dest.key);
+                print_keys(door_mask);
+                printf(" edge contains keys: ");
+                print_keys(edge.keys_mask);
+                printf("\n");
+                Robots next = robots;
+                next.pos[ri] = edge.dest.key;
+                Result new_result = result;
+                new_result.keys[new_result.num] = edge.dest.key;
+                new_result.dist[new_result.num] = edge.dist;
+                new_result.num++;
+                int d = traverse_starts(memo, pc, next, door_mask | edge.keys_mask, new_result) + edge.dist;
+                new_result.num--;
+                if (min_dist == -1 || d < min_dist) {
+                    result = new_result;
+                } else {
+                    //print_result(new_result, 0);
+                    fflush(stdout);
+                }
+                print_result(new_result, 0);
+                min_dist = (min_dist == -1 || d < min_dist) ? d : min_dist;
+                #else
+                Result new_result = result;
+                int d = traverse_take_edge(memo, pc, robots, ri, edge, door_mask, new_result);
+                if (min_dist == -1 || d < min_dist) {
+                    result = new_result;
+                    min_dist = d;
+                } else {
+                    //print_result(new_result, 0);
+                    //fflush(stdout);
+                }
+                #endif
+            }
+        }
+        //if (min_dist != -1) memo_put(memo, mk, min_dist);
+    }
+    assert(min_dist != -1);
+
+    //char key = 'a';
+    //while (door_mask != 0) {
+    //    if (door_mask & 1) {
+    //        putchar(key);
+    //    }
+    //    door_mask >>= 1;
+    //    key++;
+    //}
+    //printf("; at=%c dist=%d\n", pos, min_dist);
+
+    //memo_put(memo, mk, min_dist);
+
+    return min_dist;
+}
+
+int traverse_starts(Memo *memo, const Precomp &pc) {
+    Result result = {};
+    Robots robots = {'@', '@', '@', '@'};
+    int dist = traverse_starts(memo, pc, robots, 0u, result);
+
+    result.num = 25;
+    print_result(result, dist);
+
+    //putchar(robots.pos[0]);
+    //putchar(robots.pos[1]);
+    //putchar(robots.pos[2]);
+    //putchar(robots.pos[3]);
+    //printf(" <- robots\n");
+
+    return dist;
+}
+
+void part_two() 
+{
+    uint64_t start_time = perf_time_nanos();
+
+    Map map = map_from_file("input-example_p2_4.txt");
+
+    Objects objects = {};
+    map_find_objects(&objects, map);
+
+    patch_map(map, &objects);
+    
+    if (0) {
+        uint64_t start_time = perf_time_nanos();
+        AStar astar = astar_alloc(map.width, map.height);
+        astar_fill_dead_ends_in_map(astar, map, objects.start_position[0]);
+        uint64_t total_time_nanos = perf_time_elapsed_nanos(start_time);
+        printf("Filling dead ends took %d ms\n", (int)(total_time_nanos / 1000'000));
+    }
+
+    Precomp precomp = precompute(map, objects, 4);
+    precomp_print(precomp, 4);
+    //return;
+    
+    Memo memo = { };
+    uint64_t traverse_start_time = perf_time_nanos();
+    int result = traverse_starts(&memo, precomp);
+    uint64_t traverse_time_nanos = perf_time_elapsed_nanos(traverse_start_time);
+
+
+    uint64_t total_time_nanos = perf_time_elapsed_nanos(start_time);
+
+    printf("Traverse %u ms, %u ms total\n",
+           (uint32_t)(traverse_time_nanos/1000'000), (uint32_t)(total_time_nanos/1000'000));
+    printf("Part 2 - result: %d\n", result);
+}
+
 int main(int argc, char **argv)
 {
     //part_one();
-    part_one_take2();
+    //part_one_take2();
+    part_two();
     return 0;
 }
 
