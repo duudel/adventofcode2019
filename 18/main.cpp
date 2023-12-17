@@ -499,12 +499,11 @@ unsigned int memo_hash2(Memo::Key key) {
     //return key.key_bits ^ (key.pos.y * 111 + key.pos.x * 83);
 }
 
-#define MEMO_MAX_SEARCH 100
 //#define MEMO_MAX_SEARCH 20
+#define MEMO_MAX_SEARCH 50
+//#define MEMO_MAX_SEARCH 100
 
 void memo_put(Memo *memo, Memo::Key key, int distance) {
-    //memo->map[key] = distance;
-    //return;
     if (memo->values_cap - memo->values_n <= memo->values_n / 2) {
         //int new_cap = memo->values_cap * 2 + 4;
         int new_cap = (memo->values_cap < 512) ? 512 : memo->values_cap * 4 + 103;
@@ -570,10 +569,6 @@ void memo_put(Memo *memo, Memo::Key key, int distance) {
 }
 
 bool memo_get(Memo *memo, Memo::Key key, int *distance) {
-    //if (auto result = memo->map.find(key); result != memo->map.end()) {
-    //    *distance = result->second;
-    //    return true;
-    //} else return false;
     if (memo->values_n == 0) return false;
     
     //int max_search = memo->values_cap;
@@ -685,9 +680,12 @@ void astar_init(AStar *astar) {
 
 bool astar_update_value(AStar &astar, Pos pos, int new_value)
 {
-    int v = astar[pos];
+    int i = astar.width * pos.y + pos.x;
+    int v = astar.map[i];
+    //int v = astar[pos];
     if (new_value < v) {
-        astar[pos] = new_value;
+        astar.map[i] = new_value;
+        //astar[pos] = new_value;
         return true;
     }
     return false;
@@ -751,7 +749,7 @@ void astar_fill_dead_ends_in_map(AStar &astar, Map map, Pos pos)
         else printf("filled = %d\n", filled);
     }
 
-    //print_map(map, st.keys_reachable_bits, {-1,-1});
+    //print_map(map, 0, pos);
     //getchar();
 }
 
@@ -1013,7 +1011,11 @@ struct AStarStack {
     int allocated;
 };
 
-AStar& astar_stack_push(AStarStack &stack) {
+uint64_t astar_stack_push_time;
+
+void astar_stack_push(AStarStack &stack) {
+#if 0
+    //uint64_t t = perf_time_nanos();
     assert(stack.current + 1 < 10000);
     if (stack.allocated < stack.current + 1) {
         stack.a[stack.allocated + 1] = astar_alloc(stack.a[0].width, stack.a[0].height);
@@ -1021,13 +1023,14 @@ AStar& astar_stack_push(AStarStack &stack) {
     }
     AStar &current = stack.a[stack.current];
     AStar &result = stack.a[stack.current + 1];
-    mempcpy(result.map, current.map, current.width * current.height * sizeof(ASint));
+    mempcpy(result.map, current.map, (current.width * current.height) * sizeof(ASint));
     stack.current++;
-    return result;
+    //astar_stack_push_time += perf_time_elapsed_nanos(t);
+#endif
 }
 
 void astar_stack_pop(AStarStack &stack) {
-    stack.current--;
+    //stack.current--;
 }
 
 AStar& astar_stack_current(AStarStack &stack) {
@@ -1090,7 +1093,7 @@ void astar_to_west(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doo
     astar_to_west(edges, st, map, pos, doors_mask, keys_mask, dist + 1);
     astar_to_north(edges, st, map, pos, doors_mask, keys_mask, dist + 1);
     astar_to_south(edges, st, map, pos, doors_mask, keys_mask, dist + 1);
-    astar_stack_push(st);
+    astar_stack_pop(st);
 }
 
 void astar_to_east(Edges *edges, AStarStack &st, Map map, Pos from, uint32_t doors_mask, uint32_t keys_mask, int dist) {
@@ -1401,6 +1404,7 @@ void part_one_take2()
         astar_fill_dead_ends_in_map(astar, map, objects.start_position[0]);
         uint64_t total_time_nanos = perf_time_elapsed_nanos(start_time);
         printf("Filling dead ends took %d ms\n", (int)(total_time_nanos / 1000'000));
+        fflush(stdout);
     }
 
     Memo memo = { };
@@ -1437,6 +1441,13 @@ void patch_map(Map map, Objects *objects) {
 
 struct Robots {
     char pos[4];
+
+    int to_key() {
+        return (pos[0] << 24)
+            + (pos[1] << 16)
+            + (pos[2] << 8)
+            + (pos[3] << 0);
+    }
 };
 
 struct Result {
@@ -1472,72 +1483,57 @@ void print_keys(uint32_t keys_mask) {
 
 int traverse_starts(Memo *memo, const Precomp &pc, Robots robots, uint32_t door_mask, Result &result);
 
-int traverse_take_edge(Memo *memo, const Precomp &pc, Robots robots, int robot_index, Edge edge, uint32_t door_mask, Result &result) {
-    printf("Bot %d takes edge to %c - keys: ", robot_index, edge.dest.key);
-    print_keys(door_mask);
-    printf(" edge contains keys: ");
-    print_keys(edge.keys_mask);
-    printf("\n");
+inline int traverse_take_edge(Memo *memo, const Precomp &pc, Robots &robots, int robot_index, Edge edge, uint32_t door_mask, Result &result) {
+    //printf("Bot %d takes edge to %c - keys: ", robot_index, edge.dest.key);
+    //print_keys(door_mask);
+    //printf(" edge contains keys: ");
+    //print_keys(edge.keys_mask);
+    //printf("\n");
 
-    Robots next = robots;
-    next.pos[robot_index] = edge.dest.key;
+    #if 0
+    Memo::Key mk = Memo::Key{.pos={edge.dest.key, robots.to_key()}, .key_bits=door_mask};
+    int memo_result;
+    if (memo_get(memo, mk, &memo_result)) {
+        //printf("memo: %d\n", memo_result);
+        return memo_result;
+    }
 
+    //Robots next = robots;
+    //next.pos[robot_index] = edge.dest.key;
+    
     result.keys[result.num] = edge.dest.key;
     result.dist[result.num] = edge.dist;
 
     result.num++;
     int d = traverse_starts(memo, pc, next, door_mask | edge.keys_mask, result) + edge.dist;
     result.num--;
+    #else
+    char saved = robots.pos[robot_index];
+    robots.pos[robot_index] = edge.dest.key;
+    
+    Memo::Key mk = Memo::Key{.pos={robots.to_key()}, .key_bits=door_mask};
+    int memo_result;
+    if (memo_get(memo, mk, &memo_result)) {
+        robots.pos[robot_index] = saved;
+        return memo_result;
+    }
 
-    print_result(result, 0);
+    int d = traverse_starts(memo, pc, robots, door_mask | edge.keys_mask, result) + edge.dist;
+
+    robots.pos[robot_index] = saved;
+    #endif
+
+
+    memo_put(memo, mk, d);
+
+    //print_result(result, 0);
     return d;
 }
 
 int traverse_starts(Memo *memo, const Precomp &pc, Robots robots, uint32_t door_mask, Result &result) {
-    //const Edges *edges;
-    //char p = robots.pos[robot_index];
-    //if (p == '@') {
-    //    edges = &pc.for_start[robot_index];
-    //} else {
-    //    assert(is_key(p));
-    //    edges = &pc.for_keys[key_to_index(p)];
-    //    door_mask |= door_to_bit(key_to_door(p));
-
-    //    if (door_mask == pc.all_keys_mask) {
-    //        return 0;
-    //    }
-    //}
-
-    //char p = robots.pos[robot_index];
-    //if (is_key(p)) {
-    //    door_mask |= door_to_bit(key_to_door(p));
-
-    //    if (door_mask == pc.all_keys_mask) {
-    //        print_result(result, 0);
-    //        return 0;
-    //    }
-    //}
-
-    //Memo::Key mk = Memo::Key{.pos={p, 0}, .key_bits=door_mask};
-    //int memo_result;
-    //if (memo_get(memo, mk, &memo_result)) {
-    //    //print_memo(memo);
-    //    //printf("Memo: %c %x\n", pos, door_mask);
-    //    return memo_result;
-    //}
-
     int min_dist = -1;
     for (int ri = 0; ri < 4; ri++) {
         char p = robots.pos[ri];
-
-        //Memo::Key mk = Memo::Key{.pos={p, ri}, .key_bits=door_mask};
-        //int memo_result;
-        //if (memo_get(memo, mk, &memo_result)) {
-        //    printf("memo: %d\n", memo_result);
-        //    min_dist = (min_dist == -1 || memo_result < min_dist) ? memo_result : min_dist;
-        //    continue;
-        //    //return memo_result;
-        //}
 
         const Edges *edges;
         if (p == '@') {
@@ -1556,29 +1552,6 @@ int traverse_starts(Memo *memo, const Precomp &pc, Robots robots, uint32_t door_
             Edge edge = edges->edges[i];
             bool not_already_traversed = (door_mask & door_to_bit(key_to_door(edge.dest.key))) == 0;
             if (not_already_traversed && (edge.doors_mask & door_mask) == edge.doors_mask) {
-                #if 0
-                printf("Bot %d takes edge to %c - keys: ", ri, edge.dest.key);
-                print_keys(door_mask);
-                printf(" edge contains keys: ");
-                print_keys(edge.keys_mask);
-                printf("\n");
-                Robots next = robots;
-                next.pos[ri] = edge.dest.key;
-                Result new_result = result;
-                new_result.keys[new_result.num] = edge.dest.key;
-                new_result.dist[new_result.num] = edge.dist;
-                new_result.num++;
-                int d = traverse_starts(memo, pc, next, door_mask | edge.keys_mask, new_result) + edge.dist;
-                new_result.num--;
-                if (min_dist == -1 || d < min_dist) {
-                    result = new_result;
-                } else {
-                    //print_result(new_result, 0);
-                    fflush(stdout);
-                }
-                print_result(new_result, 0);
-                min_dist = (min_dist == -1 || d < min_dist) ? d : min_dist;
-                #else
                 Result new_result = result;
                 int d = traverse_take_edge(memo, pc, robots, ri, edge, door_mask, new_result);
                 if (min_dist == -1 || d < min_dist) {
@@ -1588,25 +1561,10 @@ int traverse_starts(Memo *memo, const Precomp &pc, Robots robots, uint32_t door_
                     //print_result(new_result, 0);
                     //fflush(stdout);
                 }
-                #endif
             }
         }
-        //if (min_dist != -1) memo_put(memo, mk, min_dist);
     }
     assert(min_dist != -1);
-
-    //char key = 'a';
-    //while (door_mask != 0) {
-    //    if (door_mask & 1) {
-    //        putchar(key);
-    //    }
-    //    door_mask >>= 1;
-    //    key++;
-    //}
-    //printf("; at=%c dist=%d\n", pos, min_dist);
-
-    //memo_put(memo, mk, min_dist);
-
     return min_dist;
 }
 
@@ -1631,7 +1589,8 @@ void part_two()
 {
     uint64_t start_time = perf_time_nanos();
 
-    Map map = map_from_file("input-example_p2_4.txt");
+    //Map map = map_from_file("input-example_p2_4.txt");
+    Map map = map_from_file("input.txt");
 
     Objects objects = {};
     map_find_objects(&objects, map);
@@ -1647,8 +1606,9 @@ void part_two()
     }
 
     Precomp precomp = precompute(map, objects, 4);
-    precomp_print(precomp, 4);
-    //return;
+    //precomp_print(precomp, 4);
+
+    printf("Astar push: %u ms\n", (unsigned)(astar_stack_push_time / 1000'000));
     
     Memo memo = { };
     uint64_t traverse_start_time = perf_time_nanos();
@@ -1666,7 +1626,7 @@ void part_two()
 int main(int argc, char **argv)
 {
     //part_one();
-    //part_one_take2();
+    part_one_take2();
     part_two();
     return 0;
 }
