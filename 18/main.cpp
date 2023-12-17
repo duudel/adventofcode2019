@@ -119,6 +119,14 @@ How many steps is the shortest path that collects all of the keys?
 #include <cstdint>
 #include <ctime>
 
+unsigned int min(unsigned int a, unsigned int b) {
+    return a < b ? a : b;
+}
+
+unsigned int max(unsigned int a, unsigned int b) {
+    return a > b ? a : b;
+}
+
 uint64_t perf_time_nanos() {
     timespec ts;
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts);
@@ -427,12 +435,13 @@ struct Memo
         int dist;
     };
     Value *values;
-    int values_n;
-    int values_cap;
+    unsigned int values_n;
+    unsigned int values_cap;
 
     struct {
         int64_t hit;
         int64_t miss;
+        int64_t replaces;
     } stats;
 };
 
@@ -475,25 +484,17 @@ unsigned int memo_hash(Memo::Key key) {
     //return hi ^ (key.pos.y * 517741 + key.pos.x * 109 + lo);
     //return key.key_bits ^ (key.pos.y * 111 + key.pos.x * 83);
     
-    //return key.key_bits ^ (key.pos.y * 107739 + key.pos.x * 2749);
+    return key.key_bits ^ (key.pos.y * 107739 + key.pos.x * 2749)
+        //+ ((key.key_bits >> 16) * (key.pos.x * 2737 + key.pos.y * 7871));
+    ;
     
-    return key.key_bits ^ (key.pos.y * 93719 + key.pos.x * 2749);
+    //return key.key_bits ^ (key.pos.y * 93719 + key.pos.x * 2749);
     //return key.key_bits ^ (key.pos.y * 2749 + key.pos.x * 7879);
-}
-
-unsigned int min(unsigned int a, unsigned int b) {
-    return a < b ? a : b;
 }
 
 unsigned int memo_hash2(Memo::Key key) {
     //return key.key_bits ^ (key.pos.y * 107739 + key.pos.x * 83);
     return key.key_bits ^ (key.pos.y * 2749 + key.pos.x * 7879);
-
-    //int lo = key.key_bits & 0xfffff;
-    //int hi = key.key_bits >> 20;
-    //return lo * key.pos.x + key.pos.y * (hi + (1 << 14));
-    //return lo ^ hi + key.pos.x + key.pos.y * 111;
-    ////return hi ^ (key.pos.y * 517741 + key.pos.x * 109 + lo);
 
     //return key.key_bits ^ (key.pos.y * 107739 + key.pos.x * 83);
     //return key.key_bits ^ (key.pos.y * 111 + key.pos.x * 83);
@@ -504,15 +505,17 @@ unsigned int memo_hash2(Memo::Key key) {
 //#define MEMO_MAX_SEARCH 100
 
 void memo_put(Memo *memo, Memo::Key key, int distance) {
-    if (memo->values_cap - memo->values_n <= memo->values_n / 2) {
-        //int new_cap = memo->values_cap * 2 + 4;
-        int new_cap = (memo->values_cap < 512) ? 512 : memo->values_cap * 4 + 103;
+    //if (memo->values_cap - memo->values_n <= memo->values_n / 2) {
+    if (memo->values_cap <= memo->values_n + memo->values_n / 4) {
+        //int new_cap = (memo->values_cap < 128) ? 512 : memo->values_cap * 4 + 37;
+        int new_cap = max(128, memo->values_cap * 3 + 37);
+        printf("Memo resize: %d -> %d (%d items)\n", memo->values_cap, new_cap, memo->values_n);
         Memo::Value *new_values = (Memo::Value*)calloc(new_cap, sizeof(Memo::Value));
         for (int i = 0; i < memo->values_cap; i++) {
             Memo::Value v = memo->values[i];
             if (v.key.key_bits == 0) continue;
             unsigned int index_p = memo_hash(v.key);
-            for (unsigned int ni = 0; ni < memo->values_cap + 4; ni++) {
+            for (unsigned int ni = 0; ni < new_cap; ni++) {
                 unsigned int index = (index_p + ni) % (unsigned)new_cap;
                 Memo::Value &nv = new_values[index];
                 if (nv.key.key_bits == 0) {
@@ -542,26 +545,29 @@ void memo_put(Memo *memo, Memo::Key key, int distance) {
                 };
                 memo->values_n++;
                 return;
-            } else if (nv.key.pos == key.pos && nv.key.key_bits == key.key_bits && nv.dist > distance) {
-                printf("Duplicate! %c\n", key.pos.x);
-                nv.dist = distance;
-                return;
             }
 
             //if ((index & 127) == 0) printf("Tried index %d\n", index);
         }
+        break;
         round++;
         index_p = memo_hash2(key);
         max_search /= 2;
     }
 
-    unsigned int index = (index_p + max_search) % (unsigned)memo->values_cap;
+    //int replace_d = 0;
+    int replace_d = max_search/2;
+    //int replace_d = max_search;
+    unsigned int index = (index_p + replace_d) % (unsigned)memo->values_cap;
     Memo::Value &nv = memo->values[index];
-    if (nv.key.key_bits == 0) memo->values_n++;
+    if (nv.key.key_bits == 0) {
+        memo->values_n++;
+    } else memo->stats.replaces++;
     nv = {
         .key = key,
         .dist = distance,
     };
+
 
     //printf("COULD NOT INSERT!\n");
     //fflush(stdout);
@@ -586,6 +592,7 @@ bool memo_get(Memo *memo, Memo::Key key, int *distance) {
                 return true;
             }
         }
+        break;
         round++;
         index_p = memo_hash2(key);
         max_search /= 2;
@@ -595,7 +602,7 @@ bool memo_get(Memo *memo, Memo::Key key, int *distance) {
 }
 
 void print_memo(Memo *memo) {
-    for (int i = 0; i < memo->values_cap; i++) {
+    if (0) for (int i = 0; i < memo->values_cap; i++) {
         Memo::Value v = memo->values[i];
         if (v.key.key_bits) {
             printf("(%d,%d), keys=%d => %d; keys: ",
@@ -612,9 +619,9 @@ void print_memo(Memo *memo) {
             printf("\n");
         }
     }
-    printf("Memo: %d items, %d capacity; hit/miss %.3f, hit%% %.3f\n",
+    printf("Memo: %d items, %d capacity; hit/miss %.3f, hit%% %.3f; replaces: %d\n",
            memo->values_n, memo->values_cap,
-           memo_hit_miss_ratio(memo), 100*memo_hit_ratio(memo));
+           memo_hit_miss_ratio(memo), 100*memo_hit_ratio(memo), (int32_t)memo->stats.replaces);
 }
 
 struct Context
@@ -999,12 +1006,6 @@ struct Precomp {
     uint32_t all_keys_mask;
 };
 
-AStar astar_copy(AStar astar) {
-    AStar result = astar_alloc(astar.width, astar.height);
-    mempcpy(result.map, astar.map, astar.width * astar.height * sizeof(ASint));
-    return result;
-}
-
 struct AStarStack {
     AStar a[10000];
     int current;
@@ -1243,7 +1244,7 @@ Precomp precompute(Map map, Objects objects, int start_position_num) {
         uint64_t a_start_time = perf_time_nanos();
         astar_calculate_edges(&result.for_start[i], astar, map, objects.start_position[i]);
         uint64_t a_elapsed = perf_time_elapsed_nanos(a_start_time);
-        printf("'%c'%d took %d ms\n", '@', i + 1, (int)(a_elapsed / 1000'000));
+        printf("'%c'%d took %d us\n", '@', i + 1, (int)(a_elapsed / 1000));
     }
     for (int i = 0; i < objects.keys_in_map_n; i++) {
         uint64_t a_start_time = perf_time_nanos();
@@ -1254,13 +1255,13 @@ Precomp precompute(Map map, Objects objects, int start_position_num) {
         astar_calculate_edges(&result.for_keys[key_index], astar, map, key.position);
 
         uint64_t a_elapsed = perf_time_elapsed_nanos(a_start_time);
-        printf("'%c' took %d ms\n", key.key, (int)(a_elapsed / 1000'000));
+        printf("'%c' took %d us\n", key.key, (int)(a_elapsed / 1000));
     }
     astar_free(astar);
     result.all_keys_mask = keys_mask;
 
     uint64_t elapsed = perf_time_elapsed_nanos(start_time);
-    printf("Precompute took %d ms\n", (int)(elapsed / 1000000));
+    printf("Precompute took %d us\n", (int)(elapsed / 1000));
     return result;
 }
 
@@ -1407,15 +1408,17 @@ void part_one_take2()
         fflush(stdout);
     }
 
-    Memo memo = { };
     Precomp precomp = precompute(map, objects, 1);
     //precomp_print(precomp);
 
+    Memo memo = { };
     uint64_t traverse_start_time = perf_time_nanos();
     int result = traverse_start(&memo, precomp, '@', 0, 0u);
     //print_memo(&memo);
     uint64_t traverse_time_nanos = perf_time_elapsed_nanos(traverse_start_time);
     uint64_t total_time_nanos = perf_time_elapsed_nanos(start_time);
+
+    memo_free(&memo);
 
     printf("Traverse %u ms, %u ms total\n",
            (uint32_t)(traverse_time_nanos/1000'000), (uint32_t)(total_time_nanos/1000'000));
@@ -1498,8 +1501,8 @@ inline int traverse_take_edge(Memo *memo, const Precomp &pc, Robots &robots, int
         return memo_result;
     }
 
-    //Robots next = robots;
-    //next.pos[robot_index] = edge.dest.key;
+    Robots next = robots;
+    next.pos[robot_index] = edge.dest.key;
     
     result.keys[result.num] = edge.dest.key;
     result.dist[result.num] = edge.dist;
@@ -1508,16 +1511,16 @@ inline int traverse_take_edge(Memo *memo, const Precomp &pc, Robots &robots, int
     int d = traverse_starts(memo, pc, next, door_mask | edge.keys_mask, result) + edge.dist;
     result.num--;
     #else
-    char saved = robots.pos[robot_index];
-    robots.pos[robot_index] = edge.dest.key;
-    
-    Memo::Key mk = Memo::Key{.pos={robots.to_key()}, .key_bits=door_mask};
+    Memo::Key mk = Memo::Key{.pos={edge.dest.key, robots.to_key()}, .key_bits=door_mask};
     int memo_result;
     if (memo_get(memo, mk, &memo_result)) {
-        robots.pos[robot_index] = saved;
+        //robots.pos[robot_index] = saved;
         return memo_result;
     }
 
+    char saved = robots.pos[robot_index];
+    robots.pos[robot_index] = edge.dest.key;
+    
     int d = traverse_starts(memo, pc, robots, door_mask | edge.keys_mask, result) + edge.dist;
 
     robots.pos[robot_index] = saved;
@@ -1539,7 +1542,7 @@ int traverse_starts(Memo *memo, const Precomp &pc, Robots robots, uint32_t door_
         if (p == '@') {
             edges = &pc.for_start[ri];
         } else {
-            assert(is_key(p));
+            //assert(is_key(p));
 
             //door_mask |= door_to_bit(key_to_door(p));
             if (door_mask == pc.all_keys_mask) {
@@ -1575,13 +1578,6 @@ int traverse_starts(Memo *memo, const Precomp &pc) {
 
     result.num = 25;
     print_result(result, dist);
-
-    //putchar(robots.pos[0]);
-    //putchar(robots.pos[1]);
-    //putchar(robots.pos[2]);
-    //putchar(robots.pos[3]);
-    //printf(" <- robots\n");
-
     return dist;
 }
 
@@ -1597,18 +1593,18 @@ void part_two()
 
     patch_map(map, &objects);
     
-    if (0) {
+    if (1) {
         uint64_t start_time = perf_time_nanos();
         AStar astar = astar_alloc(map.width, map.height);
         astar_fill_dead_ends_in_map(astar, map, objects.start_position[0]);
         uint64_t total_time_nanos = perf_time_elapsed_nanos(start_time);
-        printf("Filling dead ends took %d ms\n", (int)(total_time_nanos / 1000'000));
+        printf("Filling dead ends took %d us\n", (int)(total_time_nanos / 1000));
     }
 
     Precomp precomp = precompute(map, objects, 4);
     //precomp_print(precomp, 4);
 
-    printf("Astar push: %u ms\n", (unsigned)(astar_stack_push_time / 1000'000));
+    //printf("Astar push: %u ms\n", (unsigned)(astar_stack_push_time / 1000'000));
     
     Memo memo = { };
     uint64_t traverse_start_time = perf_time_nanos();
@@ -1618,8 +1614,10 @@ void part_two()
 
     uint64_t total_time_nanos = perf_time_elapsed_nanos(start_time);
 
-    printf("Traverse %u ms, %u ms total\n",
-           (uint32_t)(traverse_time_nanos/1000'000), (uint32_t)(total_time_nanos/1000'000));
+    print_memo(&memo);
+
+    printf("Traverse %u us, %u us total\n",
+           (uint32_t)(traverse_time_nanos/1000), (uint32_t)(total_time_nanos/1000));
     printf("Part 2 - result: %d\n", result);
 }
 
