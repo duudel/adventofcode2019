@@ -1,2 +1,5 @@
 *.exe
 
+# Binaries without extension
+??/day??
+
