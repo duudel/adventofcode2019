@@ -327,6 +327,19 @@ void part_one() {
     printf("Part 1 - %d\n", result);
 }
 
+// Part 2
+// Realisation: all applications of techniques are affine transformations on the
+// indices, modulo number of the cards. The transformations can be represented
+// as scale and offset. The transformations can be composed by function
+// composition resulting in a new affine transformation. To combine same
+// transformation N times, means to rise it to Nth power.
+//
+// The tricky part is to find out that the transformations can be inverted, when
+// the modulo is prime, as is in this case. Thus we can combine the techniques
+// into one affine transformation and invert it. Then evaluating it on the card
+// index 2020 we get the index of the card that would end up in that position
+// after the transformations.
+
 // Should not need to use 128 bit integers for card indices,
 // only as intermediate results before modulo, as the modulo is
 // less than max 64 bit integer.
